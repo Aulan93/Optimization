@@ -4,4 +4,5 @@ This repository mainly creates numerical methods for quantum neural network stat
 
 ### First case
 Want to find optimal parameters of
+![Example Image](equation.png)
 
