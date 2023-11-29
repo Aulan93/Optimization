@@ -2,9 +2,10 @@ import torch
 import torch.nn as nn
 import os
 import torch.optim as optim
-
+from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import itertools
+from tqdm import tqdm
 
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
@@ -80,6 +81,7 @@ class Net(nn.Module):
         self.fc2 = nn.Linear(100, 25)
 
     def forward(self, x):
+        x = x['input']
         x = torch.relu(self.fc1(x))
         return self.fc2(x)
 
@@ -95,48 +97,113 @@ if len(num_gpus) > 1:
     model = model.module
 
 
+class Aulan_Dataset(Dataset):
+    def __init__(self, x, y, **kwargs):
+        self.x = x
+        self.y = y
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+
+        return {'input': torch.from_numpy(self.x[idx]).float()}, {'target': torch.from_numpy(self.y[idx]).float()}
+
+def dict_to(x, device='cuda'): 
+    return {k:x[k].to(device) for k in x}
+
+def to_device(x, device='cuda'):
+    return tuple(dict_to(e,device) for e in x)
+
+class DeviceDataLoader:
+    def __init__(self, dataloader, device='cuda'):
+        self.dataloader = dataloader
+        self.device = device
+
+    def __len__(self):
+        return len(self.dataloader)
+
+    def __iter__(self):
+        for batch in self.dataloader:
+            yield tuple(dict_to(x, self.device) for x in batch)
+
 # Generate training data
-x = torch.rand(1200, 25)
+n_variables = 25
+n_samples = 10000
+batch_size = 256
+n_epochs = 1000
+save_best_weights = True
+best_eval = 1000
+
+x = torch.rand(n_samples, n_variables)
+y = torch.zeros((n_samples, n_variables))
 
 # Split data into training and validation sets
-x_train, x_val = train_test_split(x.numpy(), test_size=0.2, random_state=42)
-x_train, x_val = torch.tensor(x_train, dtype=torch.float32), torch.tensor(x_val, dtype=torch.float32)
+
+X_train, X_val, y_train, y_val = train_test_split(x, y, test_size=0.2, random_state=42)
+
+train_dataset = Aulan_Dataset(X_train, y_train)
+eval_dataset = Aulan_Dataset(X_val, y_val)
+
+train_loader = DeviceDataLoader(DataLoader(train_dataset, shuffle=True, batch_size=batch_size, drop_last=True), device)
+eval_loader = DeviceDataLoader(DataLoader(eval_dataset, shuffle=False, batch_size=batch_size, drop_last=True), device)
 
 # Loss and optimizer
 criterion = nn.MSELoss()
-optimizer = optim.Adam(net.parameters(), lr=0.01)
+optimizer = optim.Adam(net.parameters(), lr=1e-3)
 
 # Lists to store loss values
 train_losses = []
 val_losses = []
 
 # Training loop
-for epoch in range(1000):
-    optimizer.zero_grad()
+for epoch in range(n_epochs):
+    net.train()
+    
+    epoch_train_loss, epoch_val_loss = 0, 0 
 
-    # Forward pass with training data
-    inputs_train = net(x_train)
-    outputs_train = non_linear(inputs_train[:, 0], inputs_train[:, 1], inputs_train[:, 2], inputs_train[:, 3], inputs_train[:, 4], inputs_train[:, 5], inputs_train[:, 6],
-                             inputs_train[:, 7], inputs_train[:, 8], inputs_train[:, 9], inputs_train[:, 10], inputs_train[:, 11], inputs_train[:, 12], inputs_train[:, 13],
-                             inputs_train[:, 14], inputs_train[:, 15], inputs_train[:, 16], inputs_train[:, 17], inputs_train[:, 18], inputs_train[:, 18], inputs_train[:, 20],
-                             inputs_train[:, 21], inputs_train[:, 22], inputs_train[:, 23], inputs_train[:, 24])
-    loss_train = criterion(outputs_train, torch.zeros(outputs_train.size(), dtype=torch.float32))
-    loss_train.backward()
-    optimizer.step()
+    for data_train, label_train in tqdm(train_loader, desc='Training'):
+        optimizer.zero_grad()
+        inputs_train = net(data_train)        
+
+        # Forward pass with training data
+        inputs_train = net(data_train)
+        outputs_train = non_linear(inputs_train[:, 0], inputs_train[:, 1], inputs_train[:, 2], inputs_train[:, 3], inputs_train[:, 4], inputs_train[:, 5], inputs_train[:, 6],
+                                inputs_train[:, 7], inputs_train[:, 8], inputs_train[:, 9], inputs_train[:, 10], inputs_train[:, 11], inputs_train[:, 12], inputs_train[:, 13],
+                                inputs_train[:, 14], inputs_train[:, 15], inputs_train[:, 16], inputs_train[:, 17], inputs_train[:, 18], inputs_train[:, 18], inputs_train[:, 20],
+                                inputs_train[:, 21], inputs_train[:, 22], inputs_train[:, 23], inputs_train[:, 24])
+        loss_train = criterion(outputs_train, label_train['target'])
+        epoch_train_loss += loss_train.item()
+        loss_train.backward()
+        optimizer.step()
+
+    epoch_train_loss = epoch_train_loss/ len(train_loader)
 
     # Validation
-    with torch.no_grad():
-        inputs_val = net(x_val)
+    net.eval()
+    for data_eval, label_eval in tqdm(eval_loader, desc='Evaluating'):
+        with torch.no_grad():
+            inputs_val = net(data_eval)
         outputs_val = non_linear(inputs_val[:, 0], inputs_val[:, 1], inputs_val[:, 2], inputs_val[:, 3], inputs_val[:, 4], inputs_val[:, 5], inputs_val[:, 6],
-                               inputs_val[:, 7], inputs_val[:, 8], inputs_val[:, 9], inputs_val[:, 10], inputs_val[:, 11], inputs_val[:, 12], inputs_val[:, 13],
-                               inputs_val[:, 14], inputs_val[:, 15], inputs_val[:, 16], inputs_val[:, 17], inputs_val[:, 18], inputs_val[:, 18], inputs_val[:, 20],
-                               inputs_val[:, 21], inputs_val[:, 22], inputs_val[:, 23], inputs_val[:, 24])
-        loss_val = criterion(outputs_val, torch.zeros(outputs_val.size(), dtype=torch.float32))
+                                inputs_val[:, 7], inputs_val[:, 8], inputs_val[:, 9], inputs_val[:, 10], inputs_val[:, 11], inputs_val[:, 12], inputs_val[:, 13],
+                                inputs_val[:, 14], inputs_val[:, 15], inputs_val[:, 16], inputs_val[:, 17], inputs_val[:, 18], inputs_val[:, 18], inputs_val[:, 20],
+                                inputs_val[:, 21], inputs_val[:, 22], inputs_val[:, 23], inputs_val[:, 24])
+        loss_val = criterion(outputs_val, label_eval['target'])
+        epoch_val_loss += loss_val.item()
 
-    train_losses.append(loss_train.item())
-    val_losses.append(loss_val.item())
+        epoch_val_loss = epoch_val_loss / len(eval_loader)
+    
 
-    print(f'Epoch {epoch}, Training Loss: {loss_train.item()}, Validation Loss: {loss_val.item()}')
+    if save_best_weights:
+        if epoch_val_loss < best_eval:
+            best_eval = epoch_val_loss
+            torch.save({'checkpoint': model.state_dict(), 'optimizer': optimizer.state_dict()}, 'best_model.pth')
+            print('Epoch {}/{} - Training Loss: {} - New Validation Loss: {}'.format(epoch, n_epochs, epoch_train_loss, epoch_val_loss))
+        else:
+            print(f'Epoch {epoch}/{n_epochs}, Training Loss: {epoch_train_loss}, Validation Loss: {epoch_val_loss}')
+
+    train_losses.append(epoch_train_loss)
+    val_losses.append(epoch_val_loss)
 
 # Plot the training and validation loss
 plt.plot(train_losses, label='Training Loss')
