@@ -103,7 +103,7 @@ class Aulan_Dataset(Dataset):
         self.y = y
 
     def __len__(self):
-        return len(self.data)
+        return len(self.x)
 
     def __getitem__(self, idx):
 
