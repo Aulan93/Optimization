@@ -62,8 +62,8 @@ def non_linear(b, b1, b2, b3, b4, w15, w16, w116, w11, w27, w28, w29, w22, w310,
                          )
 
     # I think this could be improved
-    left_side = torch.from_numpy(np.array(left_side)).float()
-    right_side = torch.from_numpy(np.array(right_side)).float()
+    left_side = torch.cat(left_side, dim=-1).float()
+    right_side = torch.cat(right_side, dim=-1).float()
 
     # Write the optimization function
     # subs = [(a - b)**2 for a, b in zip(left_side, right_side)]
@@ -98,18 +98,17 @@ if len(num_gpus) > 1:
 
 
 class Aulan_Dataset(Dataset):
-    def __init__(self, x, y, **kwargs):
+    def __init__(self, x, **kwargs):
         self.x = x
-        self.y = y
 
     def __len__(self):
         return len(self.x)
 
     def __getitem__(self, idx):
 
-        return {'input': torch.from_numpy(self.x[idx]).float()}, {'target': torch.from_numpy(self.y[idx]).float()}
+        return {'input': torch.from_numpy(self.x[idx]).float()}, {'input': torch.from_numpy(self.x[idx]).float()}
 
-def dict_to(x, device='cuda'): 
+def dict_to(x, device='cuda'):
     return {k:x[k].to(device) for k in x}
 
 def to_device(x, device='cuda'):
@@ -136,14 +135,14 @@ save_best_weights = True
 best_eval = 1000
 
 x = torch.rand(n_samples, n_variables)
-y = torch.zeros((n_samples, n_variables))
+# y = torch.zeros((n_samples, n_variables))
 
 # Split data into training and validation sets
 
-X_train, X_val, y_train, y_val = train_test_split(x.numpy(), y.numpy(), test_size=0.2, random_state=42)
+X_train, X_val = train_test_split(x.numpy(), test_size=0.2, random_state=42)
 
-train_dataset = Aulan_Dataset(X_train, y_train)
-eval_dataset = Aulan_Dataset(X_val, y_val)
+train_dataset = Aulan_Dataset(X_train)
+eval_dataset = Aulan_Dataset(X_val)
 
 train_loader = DeviceDataLoader(DataLoader(train_dataset, shuffle=True, batch_size=batch_size, drop_last=True), device)
 eval_loader = DeviceDataLoader(DataLoader(eval_dataset, shuffle=False, batch_size=batch_size, drop_last=True), device)
@@ -162,7 +161,7 @@ for epoch in range(n_epochs):
     
     epoch_train_loss, epoch_val_loss = 0, 0 
 
-    for data_train, label_train in tqdm(train_loader, desc='Training'):
+    for data_train, _ in tqdm(train_loader, desc='Training'):
         optimizer.zero_grad()
         inputs_train = net(data_train)        
 
@@ -172,23 +171,23 @@ for epoch in range(n_epochs):
                                 inputs_train[:, 7], inputs_train[:, 8], inputs_train[:, 9], inputs_train[:, 10], inputs_train[:, 11], inputs_train[:, 12], inputs_train[:, 13],
                                 inputs_train[:, 14], inputs_train[:, 15], inputs_train[:, 16], inputs_train[:, 17], inputs_train[:, 18], inputs_train[:, 18], inputs_train[:, 20],
                                 inputs_train[:, 21], inputs_train[:, 22], inputs_train[:, 23], inputs_train[:, 24])
-        loss_train = criterion(outputs_train, label_train['target'])
+        loss_train = criterion(outputs_train, torch.zeros(outputs_train.size(), dtype=torch.float32).to(device))
         epoch_train_loss += loss_train.item()
         loss_train.backward()
         optimizer.step()
 
-    epoch_train_loss = epoch_train_loss/ len(train_loader)
+    epoch_train_loss = epoch_train_loss/len(train_loader)
 
     # Validation
     net.eval()
-    for data_eval, label_eval in tqdm(eval_loader, desc='Evaluating'):
+    for data_eval, _ in tqdm(eval_loader, desc='Evaluating'):
         with torch.no_grad():
             inputs_val = net(data_eval)
         outputs_val = non_linear(inputs_val[:, 0], inputs_val[:, 1], inputs_val[:, 2], inputs_val[:, 3], inputs_val[:, 4], inputs_val[:, 5], inputs_val[:, 6],
                                 inputs_val[:, 7], inputs_val[:, 8], inputs_val[:, 9], inputs_val[:, 10], inputs_val[:, 11], inputs_val[:, 12], inputs_val[:, 13],
                                 inputs_val[:, 14], inputs_val[:, 15], inputs_val[:, 16], inputs_val[:, 17], inputs_val[:, 18], inputs_val[:, 18], inputs_val[:, 20],
                                 inputs_val[:, 21], inputs_val[:, 22], inputs_val[:, 23], inputs_val[:, 24])
-        loss_val = criterion(outputs_val, label_eval['target'])
+        loss_val = criterion(outputs_val, torch.zeros(outputs_val.size(), dtype=torch.float32).to(device))
         epoch_val_loss += loss_val.item()
 
         epoch_val_loss = epoch_val_loss / len(eval_loader)
@@ -197,7 +196,7 @@ for epoch in range(n_epochs):
     if save_best_weights:
         if epoch_val_loss < best_eval:
             best_eval = epoch_val_loss
-            torch.save({'checkpoint': model.state_dict(), 'optimizer': optimizer.state_dict()}, 'best_model.pth')
+            torch.save({'checkpoint': net.state_dict(), 'optimizer': optimizer.state_dict()}, 'best_model.pth')
             print('Epoch {}/{} - Training Loss: {} - New Validation Loss: {}'.format(epoch, n_epochs, epoch_train_loss, epoch_val_loss))
         else:
             print(f'Epoch {epoch}/{n_epochs}, Training Loss: {epoch_train_loss}, Validation Loss: {epoch_val_loss}')
